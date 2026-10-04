@@ -1,0 +1,474 @@
+classdef Project_FDTD1 < matlab.apps.AppBase
+    % Properties that correspond to app components
+    properties (Access = public)
+        UIFigure                  matlab.ui.Figure
+        rSpinner_2                matlab.ui.control.Spinner
+        rLabel                    matlab.ui.control.Label
+        rSpinner                  matlab.ui.control.Spinner
+        rSpinnerLabel             matlab.ui.control.Label
+        TextArea                  matlab.ui.control.TextArea
+        RunButton                 matlab.ui.control.Button
+        PauseButton               matlab.ui.control.Button
+        MediumDeviceListBox       matlab.ui.control.ListBox
+        MediumDeviceListBoxLabel  matlab.ui.control.Label
+        ModeDropDown              matlab.ui.control.DropDown
+        ModeDropDownLabel         matlab.ui.control.Label
+        UIAxes2                   matlab.ui.control.UIAxes
+        UIAxes                    matlab.ui.control.UIAxes
+        pause = 0;
+    end
+
+    % Callbacks that handle component events
+    methods (Access = private)
+        % Button pushed function: RunButton
+        function RunButtonPushed(app, ~)
+            value = app.MediumDeviceListBox.Value;
+            app.pause = 0;
+            
+            % Material switch case
+            switch value
+                case 'Air'
+                    er1=1; er2=1; er3=1; ur1=1; ur2=1; ur3=1;
+                case 'Water'
+                    er1=80.2; er2=80.2; er3=80.2; ur1=1; ur2=1; ur3=1;
+                case 'Wood'
+                    er1=3; er2=3; er3=3; ur1=1; ur2=1; ur3=1;
+                case 'Aluminum'
+                    er1=4.5; er2=4.5; er3=4.5; ur1=1; ur2=1; ur3=1;
+                case 'Paper'
+                    er1=2; er2=2; er3=2; ur1=1; ur2=1; ur3=1;
+                case 'Glass'
+                    er1=4.7; er2=4.7; er3=4.7; ur1=1; ur2=1; ur3=1;
+                case 'SiO2'
+                    er1=3.7; er2=3.7; er3=3.7; ur1=1; ur2=1; ur3=1;
+                case 'Stainless Steel'
+                    er1=6; er2=6; er3=6; ur1=40; ur2=40; ur3=40;
+                case 'Graphite'
+                    er1=12; er2=12; er3=12; ur1=10; ur2=10; ur3=10;
+                case 'Device 1(Al-Si-Gl)'
+                    er1=4.5; er2=3.7; er3=4.7; ur1=1; ur2=1; ur3=1;
+                case 'Device 2(SS-Gr-P)'
+                    er1=6; er2=12; er3=2; ur1=40; ur2=10; ur3=1;
+                case 'Device 3(P-Gr-Gl)'
+                    er1=2; er2=12; er3=4.7; ur1=1; ur2=10; ur3=1;
+                case 'Other'
+                    er=app.rSpinner.Value;
+                    ur=app.rSpinner_2.Value;
+                    er1=er; er2=er; er3=er;
+                    ur1=ur; ur2=ur; ur3=ur;
+            end
+
+            c0 = 3*10^8;
+            f_max = 10^9;
+            
+            % Check user selected mode
+            simMode = app.ModeDropDown.Value; 
+
+            % =============================================================
+            % BRANCH 1: 1D SIMULATION ENGINE (Original Code)
+            % =============================================================
+            if strcmp(simMode, '1D Mode')
+                n_max = 1;
+                lambda_min = c0 / (f_max * n_max);
+                N_lambda = 50;
+                dz = lambda_min / N_lambda;
+                N_air = round(.18 / dz);
+                d = 0.12;
+                N_med = round(d / dz) + 1;
+                dz = d / N_med;
+                Nz = 3 * round(N_med/3) + N_air*2 + 2;
+
+                dt = dz / (2 * c0);
+                delta = 1.5 * dt;
+                tau = .5 / f_max;
+                t0 = 2 * 0.2 * tau;
+                t_prop = (Nz * dz) / c0;
+                STEPS = ceil((.9*tau + 3*t_prop)/dt + (er1+er2+er3+ur1+ur2+ur3)*100/6);
+                t = (0:STEPS-1) * dt;
+
+                E_src = exp(-((t - t0) / (.2 * tau)).^2);
+                H_src = -exp(-((t - t0 + delta) / (.2 * tau)).^2);
+
+                ER1 = ones(1, N_air); UR1 = ones(1, N_air);
+                ER2 = er1 * ones(1, round(N_med/3)); UR2 = ur1 * ones(1, round(N_med/3));
+                ER3 = er2 * ones(1, round(N_med/3)); UR3 = ur2 * ones(1, round(N_med/3));
+                ER4 = er3 * ones(1, round(N_med/3)); UR4 = ur3 * ones(1, round(N_med/3));
+
+                ER = [1 ER1 ER2 ER3 ER4 ER1 1];
+                UR = [1 UR1 UR2 UR3 UR4 UR1 1];
+                mEy = (c0 * dt) ./ ER;
+                mHx = (c0 * dt) ./ UR;
+
+                Hx = zeros(1, Nz); Ey = zeros(1, Nz);
+                E1 = 0; E2 = 0; E3 = 0;
+                H1 = 0; H2 = 0; H3 = 0;
+
+                freq = 10.^((0:.01:9));
+                Nfreq = length(freq);
+                K = exp(-1j * 2 * pi * freq * dt);
+                ref = zeros(1, Nfreq); trn = zeros(1, Nfreq); src = zeros(1, Nfreq);
+                i = 0;
+
+                for T = 1 : STEPS
+                    for nz = 1 : Nz-1
+                        Hx(nz) = Hx(nz) + mHx(nz)*(Ey(nz+1) - Ey(nz))/dz;
+                    end
+                    Hx(Nz) = Hx(Nz) + mHx(Nz)*(E3 - Ey(Nz))/dz;
+                    Hx(2)  = Hx(2)  - mHx(2)*(E_src(T))/dz;
+                    H3 = H2; H2 = H1; H1 = Hx(1);
+
+                    Ey(1) = Ey(1) + mEy(1)*(Hx(1) - H3)/dz;
+                    for nz = 2 : Nz
+                        Ey(nz) = Ey(nz) + mEy(nz)*(Hx(nz) - Hx(nz-1))/dz;
+                    end
+                    Ey(3) = Ey(3) - mEy(3)*(H_src(T))/dz;
+                    E3 = E2; E2 = E1; E1 = Ey(Nz);
+
+                    nz = 1:Nz;
+                    app.UIAxes.XLim = [0 Nz];
+                    app.UIAxes.YLim = [-1.5 1.5];
+                    plot(app.UIAxes, [2 2], [-2 2], 'k--', LineWidth=.5); hold(app.UIAxes, 'on');
+                    plot(app.UIAxes, [2+N_air 2+N_air], [-2 2], 'k', LineWidth=1); hold(app.UIAxes, 'on');
+                    plot(app.UIAxes, [Nz Nz], [-2 2], 'k:', LineWidth=1); hold(app.UIAxes, 'on');
+                    plot(app.UIAxes, [2+N_air+N_med 2+N_air+N_med], [-2 2], 'k', LineWidth=1); hold(app.UIAxes, 'on');
+
+                    if value=="Device 1(Al-Si-Gl)" || value=="Device 2(SS-Gr-P)" || value=="Device 3(P-Gr-Gl)"
+                        plot(app.UIAxes, [2+N_air+N_med/3 2+N_air+N_med/3], [-2 2], 'm:', ...
+                                         [2+N_air+2*N_med/3 2+N_air+2*N_med/3], [-2 2], 'm:', LineWidth=1);
+                        hold(app.UIAxes, 'on');
+                    end
+
+                    p1 = plot(app.UIAxes, nz, Ey, 'b', nz, Hx, 'r', LineWidth=2);
+                    hold(app.UIAxes, 'off');
+                    title(app.UIAxes, ['Timesteps ', num2str(T), ' out of ', num2str(STEPS)])
+                    legend(app.UIAxes, p1, 'E Field', 'M Field')
+                    drawnow;
+
+                    i = i + 1;
+                    if i >= 5
+                        for nf = 1:Nfreq
+                            ref(nf) = ref(nf) + (K(nf).^T)*Ey(1);
+                            trn(nf) = trn(nf) + (K(nf).^T)*Ey(Nz);
+                            src(nf) = src(nf) + (K(nf).^T)*E_src(T);
+                        end
+                        Ref = abs(ref ./ src).^2;
+                        Trn = abs(trn ./ src).^2;
+                        tot = Ref + Trn;
+
+                        plot(app.UIAxes2, [f_max f_max], [-1.5 1.5], 'k:', LineWidth=1); hold(app.UIAxes2, 'on');
+                        p2 = plot(app.UIAxes2, freq, Ref, 'b', freq, Trn, 'r', freq, tot, 'k:', LineWidth=1);
+                        app.UIAxes2.XLim = [0 f_max];
+                        app.UIAxes2.YLim = [0 1.5];
+                        hold(app.UIAxes2, 'off');
+                        legend(app.UIAxes2, p2, 'Reflectance', 'Transmittance', 'Total');
+                        i = 0;
+                    end
+
+                    if app.pause == 1 || T == STEPS
+                        extension = datetime('now', 'Format', 'dd_MM_yyyy_HH_mm_ss');
+                        filename = strcat('Data_1D_', string(extension), '.xlsx');
+                        f    = [{'Frequency'}; freq'];
+                        r    = [{'Reflectance'}; Ref'];
+                        t_df = [{'Transmittance'}; Trn'];
+                        totn = [{'Total'}; tot'];
+                        Data = [f; r; t_df; totn];
+                        writecell(Data, filename);
+                        break;
+                    end
+                end
+
+            % =============================================================
+            % BRANCH 2: NEW 2D TMz SIMULATION ENGINE (FIXED OPERATORS)
+            % =============================================================
+            elseif strcmp(simMode, '2D Mode')
+                Nx = 120; Ny = 120;
+                dx = 0.003; dy = 0.003;
+                dt = 1 / (c0 * sqrt((1/dx^2) + (1/dy^2)));
+                
+                tau = 0.5 / f_max;
+                t0 = 2 * 0.2 * tau;
+                STEPS = 600;
+                t = (0:STEPS-1)*dt;
+                E_src = exp(-((t - t0)/(.2 * tau)).^2);
+
+                % Field Matrices
+                Ez = zeros(Nx, Ny); Hx = zeros(Nx, Ny); Hy = zeros(Nx, Ny);
+                
+                % First-Order Mur Boundary Arrays
+                Ez_left = zeros(1, Ny); Ez_right = zeros(1, Ny);
+                Ez_top  = zeros(Nx, 1); Ez_bottom = zeros(Nx, 1);
+
+                % 2D Material Map Assignment
+                ER = ones(Nx, Ny);
+                [Yg, Xg] = meshgrid(1:Ny, 1:Nx);
+                
+            % Define custom object center coordinates
+                x_center = 80; % Change this value to shift X position
+                y_center = 60; % Change this value to shift Y position
+
+                % Place physical material object at custom position
+                if value=="Device 1(Al-Si-Gl)" || value=="Device 2(SS-Gr-P)" || value=="Device 3(P-Gr-Gl)"
+                    % Multilayer Block (shifted around x_center)
+                    ER(Xg >= (x_center-20) & Xg < (x_center-5), Ny/4:3*Ny/4) = er1;
+                    ER(Xg >= (x_center-5) & Xg < (x_center+10), Ny/4:3*Ny/4) = er2;
+                    ER(Xg >= (x_center+10) & Xg <= (x_center+25), Ny/4:3*Ny/4) = er3;
+                else
+                    % Dielectric Cylinder (shifted to x_center, y_center)
+                    cylinderMask = ((Xg - x_center).^2 + (Yg - y_center).^2) <= (18^2);
+                    ER(cylinderMask) = er1;
+                end
+
+                mEz = (c0 * dt) ./ ER;
+                mHx = (c0 * dt); 
+                mHy = (c0 * dt);
+
+                % Sensor lines for 2D FFT
+                x_ref = 10;
+                x_trn = Nx - 10;
+                freq = 10.^((0:.01:9));
+                Nfreq = length(freq);
+                K = exp(-1j * 2 * pi * freq * dt);
+                ref = zeros(1, Nfreq); trn = zeros(1, Nfreq); src = zeros(1, Nfreq);
+                i = 0;
+
+                for T = 1 : STEPS
+                    % Save edges for Mur ABC
+                    Ez_left   = Ez(2, :);   Ez_right  = Ez(Nx-1, :);
+                    Ez_bottom = Ez(:, 2);   Ez_top    = Ez(:, Ny-1);
+
+                    % Update Magnetic Fields Hx, Hy (FIXED INDEXING)
+Hx(:, 1:Ny-1) = Hx(:, 1:Ny-1) - (mHx / dy) * (Ez(:, 2:Ny) - Ez(:, 1:Ny-1));
+Hy(1:Nx-1, :) = Hy(1:Nx-1, :) + (mHy / dx) * (Ez(2:Nx, :) - Ez(1:Nx-1, :));
+
+                    % Inject Gaussian Line Source
+                    Ez(20, round(Ny/4):round(3*Ny/4)) = Ez(20, round(Ny/4):round(3*Ny/4)) + E_src(T);
+
+                    % Update Electric Field Ez (FIXED ARRAY OPERATORS)
+                    Ez(2:Nx-1, 2:Ny-1) = Ez(2:Nx-1, 2:Ny-1) + ...
+                        (mEz(2:Nx-1, 2:Ny-1) ./ dx) .* (Hy(2:Nx-1, 2:Ny-1) - Hy(1:Nx-2, 2:Ny-1)) - ...
+                        (mEz(2:Nx-1, 2:Ny-1) ./ dy) .* (Hx(2:Nx-1, 2:Ny-1) - Hx(2:Nx-1, 1:Ny-2));
+
+                    % Apply Mur ABC
+                    Ez(1, :)  = Ez_left;   Ez(Nx, :) = Ez_right;
+                    Ez(:, 1)  = Ez_bottom; Ez(:, Ny) = Ez_top;
+
+                    
+                    % =====================================================
+                    % VISUALIZE 3D SURFACE + 3D VOLUMETRIC OBJECT + ISOMETRIC VIEW
+                    % =====================================================
+                    % 1. Plot Waves
+                    mesh(app.UIAxes, Ez, 'EdgeColor', 'b'); hold(app.UIAxes, 'on'); % Blue: Ez
+                    mesh(app.UIAxes, Hx, 'EdgeColor', 'r');                         % Red: Hx
+                    % 2. Draw 3D Object Solid Volume (at updated position)
+                    if value=="Device 1(Al-Si-Gl)" || value=="Device 2(SS-Gr-P)" || value=="Device 3(P-Gr-Gl)"
+                        % Multilayer Block aligned with x_center
+                        xBox = [x_center-20 x_center+25 x_center+25 x_center-20 x_center-20; ...
+                                x_center-20 x_center+25 x_center+25 x_center-20 x_center-20];
+                        yBox = [30 30 90 90 30; 30 30 90 90 30];
+                        zBox = [-0.8 -0.8 -0.8 -0.8 -0.8; 0.8 0.8 0.8 0.8 0.8];
+                        surf(app.UIAxes, xBox, yBox, zBox, 'FaceColor', [0.5 0.5 0.5], ...
+                             'FaceAlpha', 0.25, 'EdgeColor', 'k', 'LineWidth', 1.5);
+                    else
+                        % Single Material Cylinder aligned with x_center, y_center
+                        [xCyl, yCyl, zCyl] = cylinder(18, 30);
+                        xCyl = xCyl + x_center; 
+                        yCyl = yCyl + y_center;
+                        zCyl = zCyl * 1.6 - 0.8; 
+                        surf(app.UIAxes, xCyl, yCyl, zCyl, 'FaceColor', [0.2 0.8 0.2], ...
+                             'FaceAlpha', 0.25, 'EdgeColor', 'k', 'LineWidth', 1);
+                    end
+                    
+                    hold(app.UIAxes, 'off');
+                    app.UIAxes.ZLim = [-0.8 0.8];
+                    title(app.UIAxes, ['3D View: Ez (Blue) & Hx (Red) | Step ', num2str(T), ' / ', num2str(STEPS)]);
+                    view(app.UIAxes, [-37.5, 30]);
+                    drawnow;
+                    % =====================================================
+                    
+
+                    % 2D Fourier Analysis across sensor lines
+                    i = i + 1;
+                    if i >= 5
+                        Ez_ref_avg = mean(Ez(x_ref, :));
+                        Ez_trn_avg = mean(Ez(x_trn, :));
+
+                        for nf = 1:Nfreq
+                            ref(nf) = ref(nf) + (K(nf).^T) * Ez_ref_avg;
+                            trn(nf) = trn(nf) + (K(nf).^T) * Ez_trn_avg;
+                            src(nf) = src(nf) + (K(nf).^T) * E_src(T);
+                        end
+
+                        Ref = abs(ref ./ src).^2;
+                        Trn = abs(trn ./ src).^2;
+                        tot = Ref + Trn;
+
+                        plot(app.UIAxes2, [f_max f_max], [-1.5 1.5], 'k:', LineWidth=1); hold(app.UIAxes2, 'on');
+                        p2 = plot(app.UIAxes2, freq, Ref, 'b', freq, Trn, 'r', freq, tot, 'k:', LineWidth=1);
+                        app.UIAxes2.XLim = [0 f_max];
+                        app.UIAxes2.YLim = [0 1.5];
+                        hold(app.UIAxes2, 'off');
+                        legend(app.UIAxes2, p2, 'Reflectance', 'Transmittance', 'Total');
+                        i = 0;
+                    end
+
+                    if app.pause == 1 || T == STEPS
+                        extension = datetime('now', 'Format', 'dd_MM_yyyy_HH_mm_ss');
+                        filename = strcat('Data_2D_', string(extension), '.xlsx');
+                        f    = [{'Frequency'}; freq'];
+                        r    = [{'Reflectance'}; Ref'];
+                        t_df = [{'Transmittance'}; Trn'];
+                        totn = [{'Total'}; tot'];
+                        Data = [f; r; t_df; totn];
+                        writecell(Data, filename);
+                        break;
+                    end
+                end
+            end
+        end
+
+        % Button pushed function: PauseButton
+        function PauseButtonPushed(app, ~)
+            app.pause = 1;
+        end
+
+        % Value changed function: MediumDeviceListBox
+        function MediumDeviceListBoxValueChanged(~, ~)
+        end
+
+        function UIAxesButtonDown(~, ~)
+        end
+
+        function UIAxes2ButtonDown(~, ~)
+        end
+
+        function TextAreaValueChanged(~, ~)
+        end
+    end
+
+    % Component initialization
+    methods (Access = private)
+        % Create UIFigure and components
+        function createComponents(app)
+            % Create UIFigure and hide until all components are created
+            app.UIFigure = uifigure('Visible', 'off');
+            app.UIFigure.Color = [0.9804 0.9804 0.7333];
+            app.UIFigure.Position = [100 100 766 578];
+            app.UIFigure.Name = 'MATLAB App';
+
+            % Create UIAxes
+            app.UIAxes = uiaxes(app.UIFigure);
+            title(app.UIAxes, 'EM Wave')
+            xlabel(app.UIAxes, 'Distance')
+            ylabel(app.UIAxes, 'Field Value')
+            app.UIAxes.ButtonDownFcn = createCallbackFcn(app, @UIAxesButtonDown, true);
+            app.UIAxes.Position = [301 276 451 253];
+
+            % Create UIAxes2
+            app.UIAxes2 = uiaxes(app.UIFigure);
+            xlabel(app.UIAxes2, 'Frequency')
+            ylabel(app.UIAxes2, 'Ref & Tran')
+            app.UIAxes2.ButtonDownFcn = createCallbackFcn(app, @UIAxes2ButtonDown, true);
+            app.UIAxes2.Position = [301 1 451 276];
+
+            % Create MediumDeviceListBoxLabel
+            app.MediumDeviceListBoxLabel = uilabel(app.UIFigure);
+            app.MediumDeviceListBoxLabel.FontWeight = 'Bold';
+            app.MediumDeviceListBoxLabel.HorizontalAlignment = 'right';
+            app.MediumDeviceListBoxLabel.FontSize = 18;
+            app.MediumDeviceListBoxLabel.Position = [18 452 69 44];
+            app.MediumDeviceListBoxLabel.Text = {'Medium'; '/Device'};
+
+            % Create MediumDeviceListBox
+            app.MediumDeviceListBox = uilistbox(app.UIFigure);
+            app.MediumDeviceListBox.BackgroundColor = [0.549 0.2039 0.0549];
+            app.MediumDeviceListBox.Items = {'Air', 'Water', 'Wood', 'Aluminum', 'Paper', 'Glass', 'SiO2', 'Stainless Steel', 'Graphite', 'Device 1(Al-Si-Gl)', 'Device 2(SS-Gr-P)', 'Device 3(P-Gr-Gl)', 'Other'};
+            app.MediumDeviceListBox.ValueChangedFcn = createCallbackFcn(app, @MediumDeviceListBoxValueChanged, true);
+            app.MediumDeviceListBox.FontSize = 15;
+            app.MediumDeviceListBox.FontColor = [1 1 1];
+            app.MediumDeviceListBox.Position = [102 300 155 198];
+            app.MediumDeviceListBox.Value = 'Air';
+
+            % Create ModeDropDown Label
+            app.ModeDropDownLabel = uilabel(app.UIFigure);
+            app.ModeDropDownLabel.FontWeight = 'Bold';
+            app.ModeDropDownLabel.HorizontalAlignment = 'right';
+            app.ModeDropDownLabel.FontSize = 16;
+            app.ModeDropDownLabel.Position = [18 505 69 30];
+            app.ModeDropDownLabel.Text = 'Mode';
+
+            % Create ModeDropDown
+            app.ModeDropDown = uidropdown(app.UIFigure);
+            app.ModeDropDown.Items = {'1D Mode', '2D Mode'};
+            app.ModeDropDown.BackgroundColor = [1 1 1];
+            app.ModeDropDown.FontSize = 14;
+            app.ModeDropDown.Position = [102 510 155 25];
+            app.ModeDropDown.Value = '1D Mode';
+
+            % Create RunButton
+            app.RunButton = uibutton(app.UIFigure, 'push');
+            app.RunButton.BackgroundColor = [0.0588 0.4784 0.0588];
+            app.RunButton.ButtonPushedFcn = createCallbackFcn(app, @RunButtonPushed, true);
+            app.RunButton.FontName = 'Century';
+            app.RunButton.FontSize = 25;
+            app.RunButton.FontWeight = 'bold';
+            app.RunButton.Position = [102 137 121 42];
+            app.RunButton.FontColor = [1 1 1];
+            app.RunButton.Text = 'Run';
+
+            % Create PauseButton
+            app.PauseButton = uibutton(app.UIFigure, 'push');
+            app.PauseButton.ButtonPushedFcn = createCallbackFcn(app, @PauseButtonPushed, true);
+            app.PauseButton.BackgroundColor = [1 0 0];
+            app.PauseButton.FontName = 'Century';
+            app.PauseButton.FontSize = 25;
+            app.PauseButton.FontWeight = 'bold';
+            app.PauseButton.FontColor = [1 1 1];
+            app.PauseButton.Position = [102 85 121 42];
+            app.PauseButton.Text = 'Pause';
+
+            % Create TextArea
+            app.TextArea = uitextarea(app.UIFigure);
+            app.TextArea.ValueChangedFcn = createCallbackFcn(app, @TextAreaValueChanged, true);
+            app.TextArea.FontWeight = 'bold';
+            app.TextArea.FontColor = [1 1 1];
+            app.TextArea.BackgroundColor = [0 0 0];
+            app.TextArea.HorizontalAlignment = 'center';
+            app.TextArea.Position = [242 542 283 24];
+            app.TextArea.Value = {'    Maxwell''s Equation Simulation Using FDTD'};
+
+            % Create Spinners & Labels
+            app.rSpinnerLabel = uilabel(app.UIFigure);
+            app.rSpinnerLabel.FontSize = 20; app.rSpinnerLabel.FontWeight = 'bold';
+            app.rSpinnerLabel.Position = [64 249 25 40]; app.rSpinnerLabel.Text = 'ϵr';
+
+            app.rSpinner = uispinner(app.UIFigure);
+            app.rSpinner.FontColor = [1 1 1]; app.rSpinner.BackgroundColor = [0.549 0.2039 0.0549];
+            app.rSpinner.Limits = [0 50]; app.rSpinner.Position = [104 257 128 20];
+
+            app.rLabel = uilabel(app.UIFigure);
+            app.rLabel.FontSize = 20; app.rLabel.FontWeight = 'bold';
+            app.rLabel.Position = [64 214 25 36]; app.rLabel.Text = 'μr';
+
+            app.rSpinner_2 = uispinner(app.UIFigure);
+            app.rSpinner_2.FontColor = [1 1 1]; app.rSpinner_2.BackgroundColor = [0.549 0.2039 0.0549];
+            app.rSpinner_2.Limits = [0 50]; app.rSpinner_2.Position = [104 218 128 22];
+
+            app.UIFigure.Visible = 'on';
+        end
+    end
+
+    % App creation and deletion
+    methods (Access = public)
+        function app = Project_FDTD1
+            createComponents(app)
+            registerApp(app, app.UIFigure)
+            if nargout == 0
+                clear app
+            end
+        end
+
+        function delete(app)
+            delete(app.UIFigure)
+        end
+    end
+end
